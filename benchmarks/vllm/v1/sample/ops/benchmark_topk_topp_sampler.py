@@ -10,14 +10,9 @@ from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.sample.ops.topk_topp_sampler import _apply_exponential_by_generators
 
 
-def _select_device() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
-
-
 @torch.inference_mode()
 def main(
+    device: str,
     batch_size: int,
     vocab_size: int,
     num_generators: int,
@@ -26,7 +21,6 @@ def main(
     num_warmup_iters: int,
     num_iters: int,
 ) -> None:
-    device = _select_device()
     torch.set_default_device(device)
     set_random_seed(seed)
 
@@ -80,10 +74,10 @@ def main(
     grouped_cost_avg, grouped_cost_std = run_benchmark(run_grouped, num_iters)
 
     print(
-        f"naive cost avg:   {naive_cost_avg * 1e6:.3f} us \t "
-        f"naive cost std:   {naive_cost_std * 1e6:.3f} us \t \n"
-        f"grouped cost avg: {grouped_cost_avg * 1e6:.3f} us \t "
-        f"grouped cost std: {grouped_cost_std * 1e6:.3f} us \t "
+        f"{device} {layout} naive cost avg:   {naive_cost_avg * 1e6:.3f} us \t "
+        f"{device} {layout} naive cost std:   {naive_cost_std * 1e6:.3f} us \t\n"
+        f"{device} {layout} grouped cost avg: {grouped_cost_avg * 1e6:.3f} us \t "
+        f"{device} {layout} grouped cost std: {grouped_cost_std * 1e6:.3f} us \t "
     )
 
 
@@ -92,6 +86,7 @@ def run_main():
     parser = FlexibleArgumentParser(
         description="Benchmark per-request generator sampling overhead."
     )
+    parser.add_argument("--devices", type=int, default=2048)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--vocab-size", type=int, default=2048)
     parser.add_argument("--num-generators", type=int, default=128)
@@ -99,7 +94,7 @@ def run_main():
         "--layout",
         type=str,
         choices=["contiguous", "non-contiguous"],
-        default="contiguous",
+        default="non-contiguous",
         help="How generator instances are assigned to rows.",
     )
     parser.add_argument("--seed", type=int, default=0)
@@ -108,15 +103,19 @@ def run_main():
     args = parser.parse_args()
     if args.num_generators > args.batch_size:
         raise ValueError("--num-generators cannot exceed --batch-size.")
-    main(
-        batch_size=args.batch_size,
-        vocab_size=args.vocab_size,
-        num_generators=args.num_generators,
-        layout=args.layout,
-        seed=args.seed,
-        num_warmup_iters=args.num_warmup_iters,
-        num_iters=args.num_iters,
-    )
+
+    for device in ["cpu", "cuda"]:
+        for layout in ["contiguous", "non-contiguous"]:
+            main(
+                device=device,
+                batch_size=args.batch_size,
+                vocab_size=args.vocab_size,
+                num_generators=args.num_generators,
+                layout=args.layout,
+                seed=args.seed,
+                num_warmup_iters=args.num_warmup_iters,
+                num_iters=args.num_iters,
+            )
 
 
 if __name__ == "__main__":
