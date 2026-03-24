@@ -87,7 +87,8 @@ def main(
     )
 
 
-if __name__ == "__main__":
+def run_main():
+    global args
     parser = FlexibleArgumentParser(
         description="Benchmark per-request generator sampling overhead."
     )
@@ -105,10 +106,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-warmup-iters", type=int, default=16)
     parser.add_argument("--num-iters", type=int, default=256)
     args = parser.parse_args()
-
     if args.num_generators > args.batch_size:
         raise ValueError("--num-generators cannot exceed --batch-size.")
-
     main(
         batch_size=args.batch_size,
         vocab_size=args.vocab_size,
@@ -118,3 +117,7 @@ if __name__ == "__main__":
         num_warmup_iters=args.num_warmup_iters,
         num_iters=args.num_iters,
     )
+
+
+if __name__ == "__main__":
+    run_main()
