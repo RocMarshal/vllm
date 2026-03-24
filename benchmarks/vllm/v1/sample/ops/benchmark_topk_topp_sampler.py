@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-
+import statistics
 import time
 
 import torch
@@ -13,8 +13,6 @@ from vllm.v1.sample.ops.topk_topp_sampler import _apply_exponential_by_generator
 def _select_device() -> str:
     if torch.cuda.is_available():
         return "cuda"
-    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
-        return "mps"
     return "cpu"
 
 
@@ -45,7 +43,7 @@ def main(
             end = min(start + block, batch_size)
             for row in range(start, end):
                 generators_by_row[row] = generator
-    elif layout == "strided":
+    elif layout == "non-contiguous":
         for row in range(batch_size):
             generators_by_row[row] = generators[row % num_generators]
     else:
@@ -61,31 +59,31 @@ def main(
         _apply_exponential_by_generators(q, generators_by_row)
 
     def run_benchmark(fn, num_iters: int) -> float:
+        times: list[float] = []
         if device == "cuda":
             torch.cuda.synchronize()
-        elif device == "mps":
-            torch.mps.synchronize()
-        start_time = time.perf_counter()
         for _ in range(num_iters):
+            start_time = time.perf_counter()
             fn()
-        if device == "cuda":
-            torch.cuda.synchronize()
-        elif device == "mps":
-            torch.mps.synchronize()
-        end_time = time.perf_counter()
-        return (end_time - start_time) / num_iters
+            end_time = time.perf_counter()
+            times.append(end_time - start_time)
+        avg = statistics.mean(times)
+        std = statistics.stdev(times) if len(times) > 1 else 0.0
+        return avg, std
 
-    print("Warming up...")
+    print("Warming up for run_naive...")
     run_benchmark(run_naive, num_warmup_iters)
-    run_benchmark(run_grouped, num_warmup_iters)
+    naive_cost_avg, naive_cost_std = run_benchmark(run_naive, num_iters)
 
-    naive_latency = run_benchmark(run_naive, num_iters)
-    grouped_latency = run_benchmark(run_grouped, num_iters)
+    print("Warming up for run_grouped...")
+    run_benchmark(run_grouped, num_warmup_iters)
+    grouped_cost_avg, grouped_cost_std = run_benchmark(run_grouped, num_iters)
 
     print(
-        f"naive:   {naive_latency * 1e6:.3f} us | "
-        f"grouped: {grouped_latency * 1e6:.3f} us | "
-        f"speedup: {naive_latency / grouped_latency:.3f}x"
+        f"naive cost avg:   {naive_cost_avg * 1e6:.3f} us \t "
+        f"naive cost std:   {naive_cost_std * 1e6:.3f} us \t \n"
+        f"grouped cost avg: {grouped_cost_avg * 1e6:.3f} us \t "
+        f"grouped cost std: {grouped_cost_std * 1e6:.3f} us \t "
     )
 
 
@@ -99,7 +97,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--layout",
         type=str,
-        choices=["contiguous", "strided"],
+        choices=["contiguous", "non-contiguous"],
         default="contiguous",
         help="How generator instances are assigned to rows.",
     )
